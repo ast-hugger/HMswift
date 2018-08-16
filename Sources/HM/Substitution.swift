@@ -1,26 +1,39 @@
+/**
+    A mapping of type variable names to monotypes which are to replace them.
+*/
 class Substitution {
 
     static let empty = Substitution([:])
 
-    let bindings: Dictionary<String, Type>
+    /// Maps type variable names to the types replacing them.
+    let replacements: Dictionary<String, Type>
 
-    init(_ bindings: Dictionary<String, Type>) {
-        self.bindings = bindings
+    init(_ replacements: Dictionary<String, Type>) {
+        self.replacements = replacements
     }
 
     func lookup(name: String) -> Type? {
-        return bindings[name]
+        return replacements[name]
     }
 
-    func copyWithout(names: [String]) -> Substitution {
-        let filtered = bindings.filter { some in !names.contains(some.key) }
+    /**
+        Return a new substitution which leaves variables with the specified
+        names untouched.
+    */
+    func without(names: [String]) -> Substitution {
+        let filtered = replacements.filter { some in !names.contains(some.key) }
         return Substitution(filtered)
     }
 }
 
+/**
+    Compose two substitutions. Importantly, the composition is not commutative,
+    as the `left` substitution is applied to all types in the `right`
+    substitution prior to combining all replacements.
+*/
 func + (left: Substitution, right: Substitution) -> Substitution {
-    let applied = right.bindings.mapValues { each in each.substitute(left) }
-    let merged = applied.merging(left.bindings) { (x, _) in x}
+    let rightSubstituted = right.replacements.mapValues { each in each.apply(left) }
+    let merged = left.replacements.merging(rightSubstituted) { (x, _) in x}
     return Substitution(merged)
 }
 
@@ -28,7 +41,7 @@ extension Substitution: CustomStringConvertible {
     var description: String {
         var result = "{"
         var first = true
-        for each in bindings {
+        for each in replacements {
             if first {
                 first = false
             } else {

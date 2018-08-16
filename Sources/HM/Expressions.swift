@@ -20,11 +20,7 @@ extension Variable : CustomStringConvertible {
     }
 }
 
-class Literal : Expression {
-
-}
-
-class IntLiteral : Literal {
+class IntLiteral : Expression {
     let value: Int
 
     init(value: Int) {
@@ -38,7 +34,7 @@ extension IntLiteral : CustomStringConvertible {
     }
 }
 
-class BoolLiteral : Literal {
+class BoolLiteral : Expression {
     let value: Bool
 
     init(value: Bool) {

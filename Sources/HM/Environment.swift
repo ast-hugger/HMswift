@@ -1,15 +1,18 @@
 /**
-    A type environment. Maps names to type schemes.
+    A type environment (context). 
+    Maps (program, not type) variable names to type schemes.
+    Type schemes as the target are used as a generalization of
+    monotypes.
 */
 class Environment {
-    let mapping: Dictionary<String, Scheme>
+    let bindings: Dictionary<String, Scheme>
 
-    init(_ mapping: Dictionary<String, Scheme>) {
-        self.mapping = mapping
+    init(_ bindings: Dictionary<String, Scheme>) {
+        self.bindings = bindings
     }
 
     func without(name: String) -> Environment {
-        var copy = mapping // really, does this copy the underlying table?
+        var copy = bindings // really, does this copy the underlying table?
         if let index = copy.index(forKey: name) {
             copy.remove(at: index)
         }
@@ -17,14 +20,14 @@ class Environment {
     }
 
     func with(name: String, scheme: Scheme) -> Environment {
-        var copy = mapping
+        var copy = bindings
         copy[name] = scheme
         return Environment(copy)
     }
 
     func freeVariables() -> Set<String> {
         var union = Set<String>()
-        for value in mapping.values {
+        for value in bindings.values {
             for freeVar in value.freeVariables() {
                 union.insert(freeVar)
             }
@@ -32,13 +35,13 @@ class Environment {
         return union
     }
 
-    func substitute(_ subst: Substitution) -> Environment {
-        let mapped = mapping.mapValues { each in each.substitute(subst) }
+    func apply(_ subst: Substitution) -> Environment {
+        let mapped = bindings.mapValues { each in each.apply(subst) }
         return Environment(mapped)
     }
 
     func union(_ other: Environment) -> Environment {
-        let merged = mapping.merging(other.mapping) { (x, _) in x }
+        let merged = bindings.merging(other.bindings) { (x, _) in x }
         return Environment(merged)
     }
 
@@ -49,46 +52,53 @@ class Environment {
     }
 
     /**
-        Algorithm W.
+        Hindley-Milner algorithm W.
     */
-    func inferType(_ exp: Expression) -> (type: Type, subst: Substitution)? {
+    func inferTypeW(_ exp: Expression) throws -> (type: Type, subst: Substitution) {
         if exp is IntLiteral { 
-            return (TInteger(), Substitution.empty) 
+            return (TInteger.instance, Substitution.empty) 
         }
         if exp is BoolLiteral {
-            return (TBool(), Substitution.empty)
+            return (TBool.instance, Substitution.empty)
         }
         if let variable = exp as? Variable {
-            if let scheme = mapping[variable.name] {
+            if let scheme = bindings[variable.name] {
                 return (scheme.instantiate(), Substitution.empty)
             } else {
-                return nil
+                throw InferenceError("Unbound variable \(variable.name)")
             }
         }
         if let application = exp as? Application {
-            let (fType, fSubst) = inferType(application.function)!
-            let (aType, aSubst) = substitute(fSubst).inferType(application.argument)!
             let a = newVariable()
-            let mgu = fType.substitute(aSubst) & TFunction(from: aType, to: a)
-            return (a.substitute(mgu!), mgu! + aSubst + fSubst)
+            let (fType, fSubst) = try inferTypeW(application.function)
+            let (aType, aSubst) = try apply(fSubst).inferTypeW(application.argument)
+            let mguSubst = try fType.apply(aSubst).mostGeneralUnifier(TFunction(from: aType, to: a))
+            return (a.apply(mguSubst), mguSubst + aSubst + fSubst)
         }
         if let abstraction = exp as? Abstraction {
-            let typeVar = newVariable()
+            let a = newVariable()
             let name = abstraction.variableName
             let functionEnv = self.without(name: name)
-            let argEnv = Environment([name: Scheme(variables: [], type: typeVar)])
+            let argEnv = Environment([name : Scheme(unquantified: a)])
             let env2 = functionEnv.union(argEnv)
-            let (t1, s1) = env2.inferType(abstraction.body)!
-            return (TFunction(from: typeVar.substitute(s1), to: t1), s1)
+            let (t1, s1) = try env2.inferTypeW(abstraction.body)
+            return (TFunction(from: a.apply(s1), to: t1), s1)
         }
         if let letExp = exp as? Let {
-            let (initType, initSubst) = inferType(letExp.initializer)!
+            let (initType, initSubst) = try inferTypeW(letExp.initializer)
             let envWithoutVar = self.without(name: letExp.variableName)
-            let genScheme = self.substitute(initSubst).generalize(initType)
+            let genScheme = self.apply(initSubst).generalize(initType)
             let envWithVar = envWithoutVar.with(name: letExp.variableName, scheme: genScheme)
-            let (bodyType, bodySubst) = envWithVar.substitute(initSubst).inferType(letExp.body)!
+            let (bodyType, bodySubst) = try envWithVar.apply(initSubst).inferTypeW(letExp.body)
             return (bodyType, bodySubst + initSubst)
         }
-        return nil
+        throw InferenceError("Unrecognized expression: \(exp)")
+    }
+}
+
+struct InferenceError : Error {
+    let message: String
+    init(_ message: String) {
+        self.message = message
     }
 }

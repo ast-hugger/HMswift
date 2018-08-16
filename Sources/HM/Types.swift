@@ -1,3 +1,8 @@
+/*
+    The types, or more specifically monotypes.
+    See also class Scheme for polytypes.
+*/
+
 class Type : Equatable {
 
     static func == (left: Type, right: Type) -> Bool {
@@ -13,26 +18,24 @@ class Type : Equatable {
         return Set()
     }
 
-    func substitute(_ subst: Substitution) -> Type {
+    func apply(_ subst: Substitution) -> Type {
         return self
     }
 
-    func mostGeneralUnifier(_ other: Type) -> Substitution? {
+    func mostGeneralUnifier(_ other: Type) throws -> Substitution {
         if let otherVar = other as? TVariable {
-            return bindVariable(otherVar.name, self)
+            return try bindVariable(otherVar.name, self)
         } else {
-            return nil
+            throw InferenceError("types \(self) and \(other) do not unify")
         }
     }
 }
 
-func & (left: Type, right: Type) -> Substitution? {
-    return left.mostGeneralUnifier(right)
-}
-
 class TInteger : Type, CustomStringConvertible {
-    override func mostGeneralUnifier(_ other: Type) -> Substitution? {
-        return other is TInteger ? Substitution.empty : super.mostGeneralUnifier(other)
+    static let instance = TInteger()
+
+    override func mostGeneralUnifier(_ other: Type) throws -> Substitution {
+        return other is TInteger ? Substitution.empty : try super.mostGeneralUnifier(other)
     }
 
     var description: String {
@@ -41,8 +44,10 @@ class TInteger : Type, CustomStringConvertible {
 }
 
 class TBool : Type, CustomStringConvertible {
-    override func mostGeneralUnifier(_ other: Type) -> Substitution? {
-        return other is TBool ? Substitution.empty : super.mostGeneralUnifier(other)
+    static let instance = TBool()
+
+    override func mostGeneralUnifier(_ other: Type) throws -> Substitution {
+        return other is TBool ? Substitution.empty : try super.mostGeneralUnifier(other)
     }
 
     var description: String {
@@ -65,12 +70,12 @@ class TVariable : Type, CustomStringConvertible {
         return Set([name])
     }
 
-    override func substitute(_ subst: Substitution) -> Type {
+    override func apply(_ subst: Substitution) -> Type {
         return subst.lookup(name: name) ?? self
     }
 
-    override func mostGeneralUnifier(_ other: Type) -> Substitution? {
-        return bindVariable(name, other)
+    override func mostGeneralUnifier(_ other: Type) throws -> Substitution {
+        return try bindVariable(name, other)
     }
 
     var description: String {
@@ -85,12 +90,12 @@ func newVariable(pref: String = "a") -> TVariable {
     return TVariable(name: pref + String(serial))
 }
 
-func bindVariable(_ name: String, _ type: Type) -> Substitution? {
+func bindVariable(_ name: String, _ type: Type) throws -> Substitution {
     if (type as? TVariable)?.name == name {
         return Substitution.empty
     }
     if type.freeVariables().contains(name) {
-        return nil // error; circular type
+        throw InferenceError("free variable check fails for \(name) in \(type)")
     }
     return Substitution([name : type])
 }
@@ -113,24 +118,25 @@ class TFunction : Type, CustomStringConvertible {
         return from.freeVariables().union(to.freeVariables())
     }
 
-    override func substitute(_ subst: Substitution) -> Type {
-        return TFunction(from: from.substitute(subst), to: to.substitute(subst))
+    override func apply(_ subst: Substitution) -> Type {
+        return TFunction(from: from.apply(subst), to: to.apply(subst))
     }
 
-    override func mostGeneralUnifier(_ other: Type) -> Substitution? {
+    override func mostGeneralUnifier(_ other: Type) throws -> Substitution {
         if let otherFun = other as? TFunction {
-            if let s1 = from & otherFun.from {
-                if let s2 = to.substitute(s1) & otherFun.to.substitute(s1) {
-                    return s1 + s2
-                }
-            }
-            return nil
+            let s1 = try from.mostGeneralUnifier(otherFun.from)
+            let s2 = try to.apply(s1).mostGeneralUnifier(otherFun.to.apply(s1))
+            return s1 + s2
         } else {
-            return super.mostGeneralUnifier(other)
+            return try super.mostGeneralUnifier(other)
         }
     }
 
     var description: String {
-        return "\(from) -> \(to)"
+        // The -> type constructor is right-associative so we have to parenthesize
+        // the left argument.
+        return from is TFunction
+            ? "(\(from)) -> \(to)"
+            : "\(from) -> \(to)"
     }
 }
