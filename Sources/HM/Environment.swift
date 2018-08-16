@@ -55,45 +55,64 @@ class Environment {
         Hindley-Milner algorithm W.
     */
     func inferTypeW(_ exp: Expression) throws -> (type: Type, subst: Substitution) {
+        switch exp {
+            case is IntLiteral:
+                return (TInteger.instance, Substitution.empty)
+            case is BoolLiteral:
+                return (TBool.instance, Substitution.empty)
+            case let variable as Variable:
+                if let scheme = bindings[variable.name] {
+                    return (scheme.instantiate(), Substitution.empty)
+                } else {
+                    throw InferenceError("Unbound variable \(variable.name)")
+                }
+            case let application as Application:
+                let a = newVariable()
+                let (fType, fSubst) = try inferTypeW(application.function)
+                let (aType, aSubst) = try apply(fSubst).inferTypeW(application.argument)
+                let mguSubst = try fType.apply(aSubst).mostGeneralUnifier(TFunction(from: aType, to: a))
+                return (a.apply(mguSubst), mguSubst + aSubst + fSubst)
+            case let abstraction as Abstraction:
+                let a = newVariable()
+                let name = abstraction.variableName
+                let functionEnv = self.without(name: name)
+                let argEnv = Environment([name : Scheme(unquantified: a)])
+                let env2 = functionEnv.union(argEnv)
+                let (t1, s1) = try env2.inferTypeW(abstraction.body)
+                return (TFunction(from: a.apply(s1), to: t1), s1)
+            case let letExp as Let:
+                let (initType, initSubst) = try inferTypeW(letExp.initializer)
+                let envWithoutVar = self.without(name: letExp.variableName)
+                let genScheme = self.apply(initSubst).generalize(initType)
+                let envWithVar = envWithoutVar.with(name: letExp.variableName, scheme: genScheme)
+                let (bodyType, bodySubst) = try envWithVar.apply(initSubst).inferTypeW(letExp.body)
+                return (bodyType, bodySubst + initSubst)
+            default:
+                throw InferenceError("Unrecognized expression: \(exp)")
+        }
+    }
+
+/*
+    /**
+        Hindley-Milner algorithm J.
+    */
+    func inferTypeJ(_ exp: Expression) throws -> Type {
         if exp is IntLiteral { 
-            return (TInteger.instance, Substitution.empty) 
+            return TInteger.instance
         }
         if exp is BoolLiteral {
-            return (TBool.instance, Substitution.empty)
+            return TBool.instance
         }
         if let variable = exp as? Variable {
             if let scheme = bindings[variable.name] {
-                return (scheme.instantiate(), Substitution.empty)
+                return scheme.instantiate()
             } else {
                 throw InferenceError("Unbound variable \(variable.name)")
             }
         }
-        if let application = exp as? Application {
-            let a = newVariable()
-            let (fType, fSubst) = try inferTypeW(application.function)
-            let (aType, aSubst) = try apply(fSubst).inferTypeW(application.argument)
-            let mguSubst = try fType.apply(aSubst).mostGeneralUnifier(TFunction(from: aType, to: a))
-            return (a.apply(mguSubst), mguSubst + aSubst + fSubst)
-        }
-        if let abstraction = exp as? Abstraction {
-            let a = newVariable()
-            let name = abstraction.variableName
-            let functionEnv = self.without(name: name)
-            let argEnv = Environment([name : Scheme(unquantified: a)])
-            let env2 = functionEnv.union(argEnv)
-            let (t1, s1) = try env2.inferTypeW(abstraction.body)
-            return (TFunction(from: a.apply(s1), to: t1), s1)
-        }
-        if let letExp = exp as? Let {
-            let (initType, initSubst) = try inferTypeW(letExp.initializer)
-            let envWithoutVar = self.without(name: letExp.variableName)
-            let genScheme = self.apply(initSubst).generalize(initType)
-            let envWithVar = envWithoutVar.with(name: letExp.variableName, scheme: genScheme)
-            let (bodyType, bodySubst) = try envWithVar.apply(initSubst).inferTypeW(letExp.body)
-            return (bodyType, bodySubst + initSubst)
-        }
-        throw InferenceError("Unrecognized expression: \(exp)")
+
     }
+*/
 }
 
 struct InferenceError : Error {
